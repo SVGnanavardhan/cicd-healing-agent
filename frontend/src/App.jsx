@@ -1,7 +1,9 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAgent } from "./context/AgentContext.jsx";
 
-// ─── Design tokens (mirrors CSS vars in preview.html) ─────────────────────────
+const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
   bg:"#04060c", surface:"#080d18", panel:"#0c1220",
   border:"#1a2540", borderHi:"#243352",
@@ -20,19 +22,6 @@ export function buildBranch(team, leader) {
   return `${branchPart(team)}_${branchPart(leader)}_AI_Fix`;
 }
 
-// ─── Spec-critical: exact judge test-case output format ───────────────────────
-const FIX_DESC = {
-  LINTING:     "remove the import statement",
-  SYNTAX:      "add the colon at the correct position",
-  LOGIC:       "implement proper exception handling",
-  TYPE_ERROR:  "use identity comparison",
-  IMPORT:      "use explicit imports",
-  INDENTATION: "replace tabs with 4 spaces",
-};
-export function dashboardOutput(bugType, file, line) {
-  return `${bugType} error in ${file} line ${line} → Fix: ${FIX_DESC[bugType]}`;
-}
-
 // ─── Bug type styles ──────────────────────────────────────────────────────────
 const BUG_STYLE = {
   LINTING:     { c:"#60a5fa", bg:"#1e3a5f" },
@@ -48,80 +37,101 @@ const PHASE_COLORS = {
   COMMITTING:C.green, MONITORING:"#ff8844", COMPLETE:C.green,
 };
 
-// ─── Agent simulation (mirrors backend pipeline) ──────────────────────────────
-function simulateAgentRun(repo, team, leader, maxIter, onUpdate) {
-  const br = buildBranch(team, leader);
+// ─── Real API runner — calls backend, polls until done ────────────────────────
+async function runAgentReal(repo, team, leader, token, onUpdate, signal) {
+  // 1. Trigger the run
+  onUpdate({ type:"log", phase:"CLONING", msg:`Connecting to agent backend...` });
+  onUpdate({ type:"log", phase:"CLONING", msg: token
+    ? `Mode: fork repo → push fixes to your fork`
+    : `Mode: push fixes directly to new branch on original repo` });
 
-  const FAILS = [
-    { file:"src/utils.py",     line:15, bug_type:"LINTING",     description:"Unused import 'os'",                     dashboard_output:dashboardOutput("LINTING",    "src/utils.py",     15) },
-    { file:"src/validator.py", line:8,  bug_type:"SYNTAX",      description:"Missing colon after function definition", dashboard_output:dashboardOutput("SYNTAX",     "src/validator.py", 8)  },
-    { file:"src/processor.py", line:34, bug_type:"LOGIC",       description:"Bare except clause — too broad",          dashboard_output:dashboardOutput("LOGIC",      "src/processor.py", 34) },
-    { file:"src/models.py",    line:22, bug_type:"TYPE_ERROR",  description:"Use 'is None' not '== None'",             dashboard_output:dashboardOutput("TYPE_ERROR", "src/models.py",    22) },
-    { file:"src/helpers.py",   line:5,  bug_type:"IMPORT",      description:"Wildcard import detected",                dashboard_output:dashboardOutput("IMPORT",     "src/helpers.py",   5)  },
-    { file:"src/config.py",    line:11, bug_type:"INDENTATION", description:"Tabs detected (use 4 spaces)",            dashboard_output:dashboardOutput("INDENTATION","src/config.py",    11) },
-  ];
-  const FIXES = FAILS.map(f => ({
-    ...f,
-    commit_message: `[AI-AGENT] Fix ${f.bug_type} in ${f.file} line ${f.line}`,
-    status: Math.random() > 0.12 ? "Fixed" : "Failed",
-  }));
-  const CI = [
-    { iteration:1, timestamp:new Date().toISOString(),                  status:"FAILED", passed:2, failed:4, output:"flake8: 6 issues found\npytest: 3 FAILED, 2 passed" },
-    { iteration:2, timestamp:new Date(Date.now()+52000).toISOString(),  status:"FAILED", passed:4, failed:2, output:"flake8: 2 issues found\npytest: 1 FAILED, 4 passed" },
-    { iteration:3, timestamp:new Date(Date.now()+98000).toISOString(),  status:"PASSED", passed:6, failed:0, output:"flake8: 0 issues\npytest: 6 passed in 1.24s ✓"      },
-  ];
-  const PHASES = [
-    { ph:"CLONING",    msg:`Cloning ${repo}...`,                                              d:500   },
-    { ph:"CLONING",    msg:`Branch created: ${br}`,                                           d:1300  },
-    { ph:"ANALYZING",  msg:"ClonerAgent → AnalyzerAgent handoff complete",                    d:2100  },
-    { ph:"ANALYZING",  msg:`Scanning ${new Set(FAILS.map(f=>f.file)).size} source files...`,  d:2800  },
-    { ph:"ANALYZING",  msg:`AnalyzerAgent: Found ${FAILS.length} issues`,                     d:3500  },
-    { ph:"FIXING",     msg:"AnalyzerAgent → FixerAgent handoff",                              d:4200  },
-    { ph:"FIXING",     msg:"FixerAgent: Applying targeted patches...",                        d:5000  },
-    { ph:"FIXING",     msg:`FixerAgent: ${FIXES.filter(f=>f.status==="Fixed").length} fixes applied`, d:5800 },
-    { ph:"COMMITTING", msg:"FixerAgent → CommitterAgent handoff",                             d:6400  },
-    { ph:"COMMITTING", msg:`[AI-AGENT] Commit #1 pushed to ${br}`,                           d:7100  },
-    { ph:"MONITORING", msg:"CommitterAgent → MonitorAgent handoff",                           d:7800  },
-    { ph:"MONITORING", msg:"MonitorAgent: CI/CD Run #1 — running flake8 + pytest...",         d:8600  },
-    { ph:"MONITORING", msg:"MonitorAgent: Run #1 FAILED — 4 checks still failing",            d:9400  },
-    { ph:"FIXING",     msg:"Re-analyzing remaining failures...",                              d:10200 },
-    { ph:"COMMITTING", msg:"[AI-AGENT] Commit #2 pushed",                                     d:11400 },
-    { ph:"MONITORING", msg:"MonitorAgent: Run #2 FAILED — 2 checks remaining",               d:12600 },
-    { ph:"FIXING",     msg:"Final pass — applying remaining patches...",                      d:13400 },
-    { ph:"COMMITTING", msg:"[AI-AGENT] Commit #3 pushed",                                     d:14200 },
-    { ph:"MONITORING", msg:"MonitorAgent: Run #3 — ALL CHECKS PASSED ✓",                     d:15600 },
-    { ph:"COMPLETE",   msg:`Done. results.json written. Branch: ${br}`,                       d:16400 },
-  ];
-
-  let cancelled = false;
-  const T = [];
-  PHASES.forEach(({ ph, msg, d }) => T.push(setTimeout(() => { if (!cancelled) onUpdate({ type:"log", phase:ph, msg }); }, d)));
-  FAILS.forEach((f, i) => T.push(setTimeout(() => { if (!cancelled) onUpdate({ type:"failure", failure:f }); }, 3600 + i * 130)));
-  FIXES.forEach((f, i) => T.push(setTimeout(() => { if (!cancelled) onUpdate({ type:"fixes", fixes:FIXES.slice(0, i + 1) }); }, 5900 + i * 200)));
-  CI.forEach((run, i) => T.push(setTimeout(() => { if (!cancelled) onUpdate({ type:"cirun", run }); }, 9500 + i * 3800)));
-
-  const t0 = Date.now();
-  T.push(setTimeout(() => {
-    if (cancelled) return;
-    const elapsed = Math.round((Date.now() - t0) / 1000);
-    const bonus = elapsed < 300 ? 10 : 0;
-    const pen = 0;
-    onUpdate({
-      type: "complete",
-      result: {
-        final_status:"PASSED", branch_name:br,
-        total_failures:FAILS.length,
-        total_fixes:FIXES.filter(f=>f.status==="Fixed").length,
-        commit_count:3,
-        total_time_seconds:elapsed,
-        total_time_display:`${Math.floor(elapsed/60)}m ${elapsed%60}s`,
-        score:{ base:100, speed_bonus:bonus, efficiency_penalty:pen, total:100+bonus-pen },
-        failures:FAILS, fixes:FIXES, ci_runs:CI,
-      },
+  let runId;
+  try {
+    const res = await fetch(`${BASE}/api/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repo_url:     repo,
+        team_name:    team,
+        leader_name:  leader,
+        github_token: token || "",   // optional — empty string if not provided
+      }),
+      signal,
     });
-  }, 16700));
+    if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    runId = data.run_id;
+    onUpdate({ type:"log", phase:"CLONING", msg:`Run started. ID: ${runId}` });
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    onUpdate({ type:"error", msg: e.message });
+    return;
+  }
 
-  return () => { cancelled = true; T.forEach(clearTimeout); };
+  // 2. Poll every 2s until complete
+  let lastLogCount = 0;
+  while (true) {
+    if (signal.aborted) return;
+    await new Promise(r => setTimeout(r, 2000));
+    if (signal.aborted) return;
+
+    let data;
+    try {
+      const res = await fetch(`${BASE}/api/run/${runId}`, { signal });
+      if (!res.ok) continue;
+      data = await res.json();
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      continue;
+    }
+
+    // Stream new log entries to terminal
+    if (data.results?.logs) {
+      const logs = data.results.logs;
+      for (let i = lastLogCount; i < logs.length; i++) {
+        const entry = logs[i];
+        // Guess phase from message
+        let phase = "MONITORING";
+        const m = entry.msg.toLowerCase();
+        if (m.includes("clon")) phase = "CLONING";
+        else if (m.includes("analyz")) phase = "ANALYZING";
+        else if (m.includes("fix")) phase = "FIXING";
+        else if (m.includes("commit") || m.includes("push")) phase = "COMMITTING";
+        else if (m.includes("monitor") || m.includes("flake") || m.includes("pytest")) phase = "MONITORING";
+        else if (m.includes("done") || m.includes("results.json")) phase = "COMPLETE";
+        onUpdate({ type:"log", phase, msg: entry.msg });
+      }
+      lastLogCount = logs.length;
+    }
+
+    // Stream failures as they appear
+    if (data.results?.failures) {
+      data.results.failures.forEach(f => onUpdate({ type:"failure", failure: f }));
+    }
+
+    // Stream fixes as they appear
+    if (data.results?.fixes) {
+      onUpdate({ type:"fixes", fixes: data.results.fixes });
+    }
+
+    // Stream CI runs
+    if (data.results?.ci_runs) {
+      data.results.ci_runs.forEach(r => onUpdate({ type:"cirun", run: r }));
+    }
+
+    if (data.status === "complete") {
+      onUpdate({ type:"complete", result: data.results });
+      return;
+    }
+
+    if (data.status === "error") {
+      onUpdate({ type:"error", msg: data.error || "Agent failed" });
+      return;
+    }
+
+    // Show status in terminal
+    onUpdate({ type:"log", phase:"MONITORING", msg:`Status: ${data.status}...` });
+  }
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -164,10 +174,13 @@ function BCode({ children, style = {} }) {
 function InputPanel({ form, running, onRun, onChange }) {
   const preview = form.team || form.leader ? buildBranch(form.team || "TEAM", form.leader || "LEADER") : null;
   const canRun  = !running && form.repo && form.team && form.leader;
+  const hasToken = !!form.github_token?.trim();
+
   return (
     <Panel>
       <PH icon="⌨️" title="Repository Configuration"/>
       <div style={{ padding:"18px 20px" }}>
+        {/* Row 1: repo + team + leader + button */}
         <div className="igrid">
           <div>
             <label>GitHub Repository URL</label>
@@ -189,6 +202,48 @@ function InputPanel({ form, running, onRun, onChange }) {
             </button>
           </div>
         </div>
+
+        {/* Row 2: GitHub token — optional */}
+        <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${C.border}` }}>
+          <div style={{ display:"flex", alignItems:"flex-end", gap:12 }}>
+            <div style={{ flex:1 }}>
+              <label>
+                GitHub Token
+                <span style={{ color:C.textDim, marginLeft:6, fontSize:8, letterSpacing:1, textTransform:"none", fontWeight:400 }}>
+                  optional — get from github.com/settings/tokens
+                </span>
+              </label>
+              <input
+                type="password"
+                value={form.github_token || ""}
+                onChange={e=>onChange("github_token",e.target.value)}
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx  (leave empty to skip push)"
+              />
+            </div>
+            {/* Mode badge */}
+            <div style={{ flexShrink:0, paddingBottom:2, display:"flex", alignItems:"center", gap:6,
+              background:hasToken?`${C.green}12`:`${C.amber}12`,
+              border:`1px solid ${hasToken?C.green:C.amber}44`,
+              borderRadius:6, padding:"6px 12px", marginBottom:0 }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:hasToken?C.green:C.amber, boxShadow:`0 0 5px ${hasToken?C.green:C.amber}` }}/>
+              <span style={{ fontSize:10, fontFamily:"monospace", color:hasToken?C.green:C.amber, letterSpacing:0.5, whiteSpace:"nowrap" }}>
+                {hasToken ? "Fork → push to your fork" : "Analyze only (no push)"}
+              </span>
+            </div>
+          </div>
+          {hasToken && (
+            <div style={{ marginTop:8, fontSize:10, color:C.textDim, fontFamily:"monospace" }}>
+              Agent will fork the repo to your GitHub account and push fixes to <span style={{ color:C.green }}>FORK/{buildBranch(form.team||"TEAM",form.leader||"LEADER")}</span>
+            </div>
+          )}
+          {!hasToken && (
+            <div style={{ marginTop:8, fontSize:10, color:C.textDim, fontFamily:"monospace" }}>
+              Without a token the agent will still analyze and fix files locally — push to GitHub skipped.
+            </div>
+          )}
+        </div>
+
+        {/* Branch preview */}
         {preview && (
           <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:8 }}>
             <span style={{ color:C.textDim, fontSize:9, letterSpacing:1.5 }}>BRANCH →</span>
@@ -243,7 +298,7 @@ function SummaryPanel({ result, running, form, failures, fixes, elapsed }) {
           { icon:"🐛", label:"Failures Detected", val:nFail, color:C.red,   bg:"#ff3b5c" },
           { icon:"🔧", label:"Fixes Applied",     val:nFix,  color:C.green, bg:"#00ff88" },
           { icon:"⏱",  label:"Total Time Taken",  val:time,  color:C.accent,bg:"#00d4ff" },
-        ].map(({ icon, label: lbl, val, color: c, bg }) => (
+        ].map(({ icon, label:lbl, val, color:c, bg }) => (
           <div key={lbl} style={{ background:`${bg}0c`, border:`1px solid ${bg}33`, borderRadius:8, padding:"15px 16px", display:"flex", alignItems:"center", gap:13 }}>
             <div style={{ width:42, height:42, borderRadius:9, background:`${bg}18`, border:`1px solid ${bg}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:19, flexShrink:0 }}>{icon}</div>
             <div>
@@ -295,8 +350,8 @@ function ScorePanel({ result }) {
       />
       <div className="scgrid" style={{ padding:"20px 22px" }}>
         <div>
-          <Bar label="Base Score"         sub="Starting score for all submissions" pct={bPct}  display="+100"                              color={C.accent}/>
-          <Bar label="Speed Bonus"        sub={`+10 if under 5 min · Actual: ${Math.floor(el/60)}m ${Math.floor(el%60)}s`} pct={bnPct} display={sc.speed_bonus>0?"+10":"+0"} color={C.green}  active={sc.speed_bonus>0}/>
+          <Bar label="Base Score"         sub="Starting score for all submissions" pct={bPct}  display="+100" color={C.accent}/>
+          <Bar label="Speed Bonus"        sub={`+10 if under 5 min · Actual: ${Math.floor(el/60)}m ${Math.floor(el%60)}s`} pct={bnPct} display={sc.speed_bonus>0?"+10":"+0"} color={C.green} active={sc.speed_bonus>0}/>
           <Bar label="Efficiency Penalty" sub={`−2 per commit over 20 · ${result.commit_count} commits`} pct={0} display={`−${pen}`} color={C.red} active={pen>0}/>
           <div style={{ borderTop:`1px solid ${C.borderHi}`, paddingTop:14, marginTop:4, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <div>
@@ -306,10 +361,7 @@ function ScorePanel({ result }) {
             <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:40, color:tc, textShadow:`0 0 18px ${tc}50` }}>{sc.total}</span>
           </div>
         </div>
-
-        {/* Right: visual chart */}
         <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-          {/* Stacked bar */}
           <div>
             <div style={{ color:C.textSub, fontSize:9, letterSpacing:2, textTransform:"uppercase", marginBottom:9 }}>Score Composition</div>
             <div style={{ height:26, background:C.border, borderRadius:6, overflow:"hidden", display:"flex" }}>
@@ -320,15 +372,7 @@ function ScorePanel({ result }) {
                 {sc.speed_bonus > 0 && <span style={{ color:"#fff", fontSize:9, fontFamily:"monospace", fontWeight:700 }}>+10</span>}
               </div>
             </div>
-            <div style={{ display:"flex", gap:14, marginTop:9, flexWrap:"wrap" }}>
-              {[{l:"Base (100)",c:C.accent},{l:"Speed Bonus",c:C.green}].map(({ l, c }) => (
-                <div key={l} style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:C.textSub }}>
-                  <div style={{ width:9, height:9, borderRadius:2, background:c, boxShadow:`0 0 4px ${c}` }}/>{l}
-                </div>
-              ))}
-            </div>
           </div>
-          {/* Circular gauge */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
             <div style={{ position:"relative", width:150, height:150 }}>
               <svg viewBox="0 0 36 36" style={{ width:"100%", height:"100%", transform:"rotate(-90deg)" }}>
@@ -346,14 +390,6 @@ function ScorePanel({ result }) {
                 <div style={{ fontSize:8, color:C.textSub, letterSpacing:2 }}>POINTS</div>
               </div>
             </div>
-            <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
-              {[{l:"Base",v:"100",c:C.accent},{l:"Bonus",v:`+${sc.speed_bonus}`,c:C.green},{l:"Penalty",v:`−${pen}`,c:pen>0?C.red:C.textDim}].map(({ l, v, c }) => (
-                <div key={l} style={{ background:`${c}10`, border:`1px solid ${c}33`, borderRadius:5, padding:"4px 10px", textAlign:"center" }}>
-                  <div style={{ color:C.textDim, fontSize:7, letterSpacing:1, textTransform:"uppercase" }}>{l}</div>
-                  <div style={{ color:c, fontFamily:"'Bebas Neue',sans-serif", fontSize:17, letterSpacing:1 }}>{v}</div>
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       </div>
@@ -361,7 +397,7 @@ function ScorePanel({ result }) {
   );
 }
 
-// ─── Panel 4: Fixes Table ─────────────────────────────────────────────────────
+// ─── Panel 4: Fixes Applied Table ─────────────────────────────────────────────
 function FixesTab({ fixes, activeFilter, onFilter }) {
   const shown  = activeFilter === "ALL" ? fixes : fixes.filter(f => f.bug_type === activeFilter);
   const fixed  = fixes.filter(f => f.status === "Fixed").length;
@@ -369,7 +405,6 @@ function FixesTab({ fixes, activeFilter, onFilter }) {
 
   return (
     <div>
-      {/* Stats bar */}
       {fixes.length > 0 && (
         <div style={{ padding:"11px 18px", borderBottom:`1px solid ${C.border}`, background:C.surface, display:"flex", alignItems:"center", gap:20, flexWrap:"wrap" }}>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
@@ -392,11 +427,8 @@ function FixesTab({ fixes, activeFilter, onFilter }) {
               <div style={{ height:"100%", width:`${rate}%`, background:rate===100?`linear-gradient(90deg,${C.greenDim},${C.green})`:`linear-gradient(90deg,${C.amberDim},${C.amber})`, transition:"width 1s ease" }}/>
             </div>
           </div>
-          <span style={{ color:C.textDim, fontSize:10, fontFamily:"monospace" }}>{fixes.length} total</span>
         </div>
       )}
-
-      {/* Filter row — all 6 bug types */}
       <div style={{ padding:"9px 18px", borderBottom:`1px solid ${C.border}`, display:"flex", gap:5, flexWrap:"wrap", background:"#050b14" }}>
         {BUG_TYPES.map(bt => {
           const bs = BUG_STYLE[bt];
@@ -417,8 +449,6 @@ function FixesTab({ fixes, activeFilter, onFilter }) {
           );
         })}
       </div>
-
-      {/* Table */}
       {fixes.length === 0
         ? <div style={{ padding:34, textAlign:"center", color:C.textDim, fontSize:12, fontFamily:"monospace" }}>Fixes will appear as the agent runs...</div>
         : shown.length === 0
@@ -447,11 +477,11 @@ function FixesTab({ fixes, activeFilter, onFilter }) {
                         <td style={{ padding:"10px 15px", maxWidth:0 }}>
                           <div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                             <span style={{ color:C.green, fontSize:10 }}>[AI-AGENT] </span>
-                            <span style={{ color:C.textSub, fontSize:11 }}>{fix.commit_message.replace("[AI-AGENT] ","")}</span>
+                            <span style={{ color:C.textSub, fontSize:11 }}>{(fix.commit_message||"").replace("[AI-AGENT] ","")}</span>
                           </div>
                         </td>
                         <td style={{ padding:"10px 15px" }}>
-                          <span style={{ display:"inline-flex", alignItems:"center", gap:5, background:ok?"#00ff8815":"#ff3b5c15", border:`1px solid ${ok?"#00ff8844":"#ff3b5c44"}`, color:ok?C.green:C.red, padding:"3px 10px", borderRadius:4, fontSize:11, fontWeight:700, boxShadow:`0 0 7px ${ok?"#00ff8820":"#ff3b5c20"}` }}>
+                          <span style={{ display:"inline-flex", alignItems:"center", gap:5, background:ok?"#00ff8815":"#ff3b5c15", border:`1px solid ${ok?"#00ff8844":"#ff3b5c44"}`, color:ok?C.green:C.red, padding:"3px 10px", borderRadius:4, fontSize:11, fontWeight:700 }}>
                             {ok?"✓":"✗"} {ok?"Fixed":"Failed"}
                           </span>
                         </td>
@@ -472,17 +502,14 @@ function CITimeline({ ciRuns, maxIter }) {
   const last = ciRuns[ciRuns.length - 1];
   return (
     <div>
-      {/* Summary bar: "3/5" counter + dot track + final badge */}
       {ciRuns.length > 0 && (
         <div style={{ padding:"11px 20px", borderBottom:`1px solid ${C.border}`, background:C.surface, display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-          {/* X/Y iterations counter */}
           <div style={{ display:"flex", alignItems:"center", gap:7, flexShrink:0 }}>
             <span style={{ color:C.textDim, fontSize:9, letterSpacing:2, textTransform:"uppercase" }}>Iterations</span>
             <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, color:C.amber, lineHeight:1 }}>{ciRuns.length}</span>
             <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:16, color:C.textDim }}>/ {maxIter}</span>
           </div>
           <div style={{ width:1, height:28, background:C.border }}/>
-          {/* Dot track showing all iteration slots */}
           <div style={{ display:"flex", alignItems:"center", gap:5 }}>
             {Array.from({ length:maxIter }).map((_,i) => {
               const run = ciRuns[i];
@@ -497,7 +524,6 @@ function CITimeline({ ciRuns, maxIter }) {
               );
             })}
           </div>
-          {/* Final result badge */}
           {last && (
             <div style={{ display:"flex", alignItems:"center", gap:8, marginLeft:"auto" }}>
               <span style={{ color:C.textDim, fontSize:9, letterSpacing:2, textTransform:"uppercase" }}>Final</span>
@@ -506,8 +532,6 @@ function CITimeline({ ciRuns, maxIter }) {
           )}
         </div>
       )}
-
-      {/* Timeline entries */}
       <div style={{ padding:"18px 22px" }}>
         {ciRuns.length === 0
           ? <div style={{ textAlign:"center", color:C.textDim, fontSize:12, fontFamily:"monospace", padding:"26px 0" }}>CI/CD runs will appear here as the agent iterates...</div>
@@ -525,26 +549,20 @@ function CITimeline({ ciRuns, maxIter }) {
                 const isLast = i === ciRuns.length - 1;
                 return (
                   <div key={i} style={{ display:"flex", gap:16, marginBottom:i<ciRuns.length-1?22:0, alignItems:"flex-start" }}>
-                    {/* Circle node */}
                     <div style={{ width:44, height:44, borderRadius:"50%", flexShrink:0, zIndex:1, background:ok?C.greenDim:C.redDim, border:`2.5px solid ${col}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:700, color:col, boxShadow:`0 0 18px ${col}50` }}>
                       {ok?"✓":"✗"}
                     </div>
-                    {/* Run card */}
                     <div style={{ flex:1, background:ok?"#00ff8806":"#ff3b5c06", border:`1px solid ${ok?"#00ff8833":"#ff3b5c33"}`, borderRadius:10, overflow:"hidden", boxShadow:isLast?`0 0 18px ${ok?"#00ff8818":"#ff3b5c18"}`:"none" }}>
                       <div style={{ padding:"11px 15px", borderBottom:`1px solid ${ok?"#00ff8822":"#ff3b5c22"}`, background:ok?"#00ff8808":"#ff3b5c08", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                         <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
                           <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:19, color:col, letterSpacing:1 }}>RUN #{run.iteration}</span>
-                          {/* Pass/fail badge per iteration */}
-                          <span style={{ display:"inline-flex", alignItems:"center", gap:6, background:`${col}18`, border:`1.5px solid ${col}`, borderRadius:6, fontFamily:"monospace", fontWeight:700, letterSpacing:1.5, padding:"3px 10px", fontSize:10, boxShadow:`0 0 10px ${col}28`, color:col }}>
-                            <span style={{ width:6, height:6, borderRadius:"50%", background:col, boxShadow:`0 0 5px ${col}` }}/>
-                            {run.status}
+                          <span style={{ display:"inline-flex", alignItems:"center", gap:6, background:`${col}18`, border:`1.5px solid ${col}`, borderRadius:6, fontFamily:"monospace", fontWeight:700, letterSpacing:1.5, padding:"3px 10px", fontSize:10, color:col }}>
+                            <span style={{ width:6, height:6, borderRadius:"50%", background:col }}/>{run.status}
                           </span>
-                          {/* "X/Y" label on each card */}
                           <span style={{ color:C.textDim, fontSize:9, fontFamily:"monospace", background:C.surface, padding:"2px 8px", borderRadius:4, border:`1px solid ${C.border}` }}>
                             {run.iteration}/{maxIter}
                           </span>
                         </div>
-                        {/* Timestamp */}
                         <div style={{ textAlign:"right", flexShrink:0 }}>
                           <div style={{ color:C.text, fontSize:12, fontFamily:"monospace", fontWeight:700 }}>{ts.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
                           <div style={{ color:C.textDim, fontSize:9, fontFamily:"monospace" }}>{ts.toLocaleDateString([],{month:"short",day:"numeric"})}</div>
@@ -612,7 +630,7 @@ function IssuesTab({ failures }) {
               <span style={{ background:bs.bg, color:bs.c, fontSize:9, padding:"2px 8px", borderRadius:3, fontWeight:700, border:`1px solid ${bs.c}44` }}>{f.bug_type}</span>
             </div>
             <div style={{ color:C.text, fontSize:12, marginBottom:5 }}>{f.description}</div>
-            <code style={{ color:C.textSub, fontSize:10 }}>{f.dashboard_output}</code>
+            {f.dashboard_output && <code style={{ color:C.textSub, fontSize:10 }}>{f.dashboard_output}</code>}
           </div>
         );
       })}
@@ -625,28 +643,63 @@ export default function App() {
   const { state, actions } = useAgent();
   const { form, running, elapsed, logs, failures, fixes, ciRuns, result, activeTab, activeFilter, maxIterations } = state;
 
-  const cancelRef = useRef(null);
+  const abortRef  = useRef(null);
   const timerRef  = useRef(null);
+  const ciRunsRef = useRef([]);  // deduplicate CI runs
 
-  // Elapsed timer
   useEffect(() => {
     if (running) { timerRef.current = setInterval(() => actions.tick(), 1000); }
     else         { clearInterval(timerRef.current); }
     return () => clearInterval(timerRef.current);
   }, [running]);
 
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback(async () => {
     if (!form.repo || !form.team || !form.leader) return;
-    if (cancelRef.current) cancelRef.current();
+
+    // Cancel any in-flight run
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    ciRunsRef.current = [];
+
     actions.start();
-    cancelRef.current = simulateAgentRun(form.repo, form.team, form.leader, maxIterations, ev => {
+
+    await runAgentReal(form.repo, form.team, form.leader, form.github_token || "", (ev) => {
       if (ev.type === "log")      actions.addLog({ phase:ev.phase, msg:ev.msg });
-      if (ev.type === "failure")  actions.addFailure(ev.failure);
-      if (ev.type === "fixes")    actions.setFixes(ev.fixes);
-      if (ev.type === "cirun")    actions.addCiRun(ev.run);
-      if (ev.type === "complete") actions.complete(ev.result);
-    });
-  }, [form, maxIterations, actions]);
+      if (ev.type === "failure")  {
+        // failures come as full array on complete, or one-by-one during run
+        if (Array.isArray(ev.failures)) {
+          ev.failures.forEach(f => actions.addFailure(f));
+        } else {
+          actions.addFailure(ev.failure);
+        }
+      }
+      if (ev.type === "fixes")    actions.setFixes(ev.fixes || []);
+      if (ev.type === "cirun")    {
+        // deduplicate by iteration number
+        if (!ciRunsRef.current.find(r => r.iteration === ev.run.iteration)) {
+          ciRunsRef.current.push(ev.run);
+          actions.addCiRun(ev.run);
+        }
+      }
+      if (ev.type === "complete") {
+        // set all real data from backend
+        if (ev.result?.failures) ev.result.failures.forEach(f => actions.addFailure(f));
+        if (ev.result?.fixes)    actions.setFixes(ev.result.fixes);
+        if (ev.result?.ci_runs) {
+          ciRunsRef.current = [];
+          ev.result.ci_runs.forEach(r => {
+            ciRunsRef.current.push(r);
+            actions.addCiRun(r);
+          });
+        }
+        actions.complete(ev.result);
+      }
+      if (ev.type === "error") {
+        actions.addLog({ phase:"COMPLETE", msg:`ERROR: ${ev.msg}` });
+        actions.complete({ final_status:"FAILED", error:ev.msg });
+      }
+    }, abortRef.current.signal);
+  }, [form, actions]);
 
   const TABS = [
     { id:"terminal", label:"⬛ Terminal" },
@@ -686,13 +739,10 @@ export default function App() {
           .sgrid{grid-template-columns:1fr 1fr}
           .scgrid{grid-template-columns:1fr}
         }
-        @media(max-width:600px){
-          .igrid,.sgrid,.scgrid{grid-template-columns:1fr}
-        }
+        @media(max-width:600px){.igrid,.sgrid,.scgrid{grid-template-columns:1fr}}
       `}</style>
 
       <div style={{ maxWidth:1300, margin:"0 auto", padding:"0 18px 60px" }}>
-
         {/* Header */}
         <div style={{ padding:"26px 0 22px", borderBottom:`1px solid ${C.border}`, marginBottom:20, display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:12 }}>
           <div>
@@ -711,16 +761,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* Panel 1: Input */}
         <InputPanel form={form} running={running} onRun={handleRun} onChange={(k,v) => actions.setForm({ [k]:v })}/>
 
-        {/* Panel 2: Run Summary */}
         {hasRun && <SummaryPanel result={result} running={running} form={form} failures={failures} fixes={fixes} elapsed={elapsed}/>}
 
-        {/* Panel 3: Score */}
         {result && result.score && <ScorePanel result={result}/>}
 
-        {/* Panels 4+5: Tabbed */}
         {hasRun && (
           <Panel>
             <div style={{ display:"flex", borderBottom:`1px solid ${C.border}`, background:C.surface, overflowX:"auto" }}>
@@ -741,14 +787,13 @@ export default function App() {
           </Panel>
         )}
 
-        {/* Empty state */}
         {!hasRun && (
           <div style={{ textAlign:"center", padding:"54px 20px", color:C.textDim }}>
             <div style={{ fontSize:42, marginBottom:14, opacity:.22 }}>⚡</div>
             <div style={{ fontSize:12, letterSpacing:2, marginBottom:8 }}>AUTONOMOUS CI/CD HEALING AGENT</div>
             <div style={{ fontSize:11, maxWidth:380, margin:"0 auto", lineHeight:1.9 }}>
               Enter a GitHub repository URL, team name, and leader name above.<br/>
-              The agent will autonomously clone, analyze, fix, and verify your code.
+              The agent will clone, analyze, fix, and push real fixes to a new branch.
             </div>
           </div>
         )}

@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback } from "react";
 
 const INIT = {
-  form:          { repo: "", team: "", leader: "" },
+  form:          { repo: "", team: "", leader: "", github_token: "" },
   running:       false,
   elapsed:       0,
   logs:          [],

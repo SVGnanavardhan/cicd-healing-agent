@@ -42,9 +42,10 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 class RunRequest(BaseModel):
-    repo_url:    str
-    team_name:   str
-    leader_name: str
+    repo_url:     str
+    team_name:    str
+    leader_name:  str
+    github_token: str = ""   # optional — empty string means no token
 
 class RunStatus(BaseModel):
     run_id:      str
@@ -56,10 +57,13 @@ class RunStatus(BaseModel):
 
 
 # ─── Background agent execution ───────────────────────────────────────────────
-def execute_agent(run_id: str, repo_url: str, team_name: str, leader_name: str):
+def execute_agent(run_id: str, repo_url: str, team_name: str, leader_name: str, github_token: str = ""):
     RUNS[run_id]["status"] = "running"
     output_file = f"{RESULTS_DIR}/results_{run_id}.json"
     try:
+        # Token from frontend overrides env var
+        if github_token:
+            os.environ["GITHUB_TOKEN"] = github_token
         agent   = CICDHealingAgent()
         results = agent.run(repo_url, team_name, leader_name, output_file)
         RUNS[run_id].update({
@@ -88,7 +92,7 @@ def trigger_run(req: RunRequest, bg: BackgroundTasks):
         "results":     None,
         "error":       None,
     }
-    bg.add_task(execute_agent, run_id, req.repo_url, req.team_name, req.leader_name)
+    bg.add_task(execute_agent, run_id, req.repo_url, req.team_name, req.leader_name, req.github_token)
     return RunStatus(**RUNS[run_id])
 
 @app.get("/api/run/{run_id}", response_model=RunStatus)
