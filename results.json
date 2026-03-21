@@ -1,0 +1,126 @@
+{
+  "repo_url": "https://github.com/example/repo",
+  "team_name": "RIFT ORGANISERS",
+  "leader_name": "Saiyam Kumar",
+  "branch_name": "RIFT_ORGANISERS_SAIYAM_KUMAR_AI_Fix",
+  "final_status": "PASSED",
+  "total_failures": 6,
+  "total_fixes": 5,
+  "commit_count": 3,
+  "total_time_seconds": 187.4,
+  "total_time_display": "3m 7s",
+  "score": {
+    "base": 100,
+    "speed_bonus": 10,
+    "efficiency_penalty": 0,
+    "total": 110
+  },
+  "failures": [
+    {
+      "file": "src/utils.py",
+      "line": 15,
+      "bug_type": "LINTING",
+      "description": "Unused import 'os'",
+      "dashboard_output": "LINTING error in src/utils.py line 15 → Fix: remove the import statement"
+    },
+    {
+      "file": "src/validator.py",
+      "line": 8,
+      "bug_type": "SYNTAX",
+      "description": "Missing colon after function definition",
+      "dashboard_output": "SYNTAX error in src/validator.py line 8 → Fix: add the colon at the correct position"
+    },
+    {
+      "file": "src/processor.py",
+      "line": 34,
+      "bug_type": "LOGIC",
+      "description": "Bare except clause",
+      "dashboard_output": "LOGIC error in src/processor.py line 34 → Fix: implement proper exception handling"
+    },
+    {
+      "file": "src/models.py",
+      "line": 22,
+      "bug_type": "TYPE_ERROR",
+      "description": "Use is None not == None",
+      "dashboard_output": "TYPE_ERROR error in src/models.py line 22 → Fix: use identity comparison"
+    },
+    {
+      "file": "src/helpers.py",
+      "line": 5,
+      "bug_type": "IMPORT",
+      "description": "Wildcard import detected",
+      "dashboard_output": "IMPORT error in src/helpers.py line 5 → Fix: use explicit imports"
+    },
+    {
+      "file": "src/config.py",
+      "line": 11,
+      "bug_type": "INDENTATION",
+      "description": "Tabs detected",
+      "dashboard_output": "INDENTATION error in src/config.py line 11 → Fix: replace tabs with 4 spaces"
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/utils.py",
+      "line": 15,
+      "bug_type": "LINTING",
+      "commit_message": "[AI-AGENT] Fix LINTING in src/utils.py line 15",
+      "status": "Fixed"
+    },
+    {
+      "file": "src/validator.py",
+      "line": 8,
+      "bug_type": "SYNTAX",
+      "commit_message": "[AI-AGENT] Fix SYNTAX in src/validator.py line 8",
+      "status": "Fixed"
+    },
+    {
+      "file": "src/processor.py",
+      "line": 34,
+      "bug_type": "LOGIC",
+      "commit_message": "[AI-AGENT] Fix LOGIC in src/processor.py line 34",
+      "status": "Fixed"
+    },
+    {
+      "file": "src/models.py",
+      "line": 22,
+      "bug_type": "TYPE_ERROR",
+      "commit_message": "[AI-AGENT] Fix TYPE_ERROR in src/models.py line 22",
+      "status": "Fixed"
+    },
+    {
+      "file": "src/helpers.py",
+      "line": 5,
+      "bug_type": "IMPORT",
+      "commit_message": "[AI-AGENT] Fix IMPORT in src/helpers.py line 5",
+      "status": "Fixed"
+    }
+  ],
+  "ci_runs": [
+    {
+      "iteration": 1,
+      "timestamp": "2026-02-20T10:00:00Z",
+      "status": "FAILED",
+      "passed": 2,
+      "failed": 4,
+      "output": "flake8: 6 issues\npytest: 3 FAILED"
+    },
+    {
+      "iteration": 2,
+      "timestamp": "2026-02-20T10:01:30Z",
+      "status": "FAILED",
+      "passed": 4,
+      "failed": 2,
+      "output": "flake8: 2 issues\npytest: 1 FAILED"
+    },
+    {
+      "iteration": 3,
+      "timestamp": "2026-02-20T10:03:07Z",
+      "status": "PASSED",
+      "passed": 6,
+      "failed": 0,
+      "output": "flake8: 0 issues\npytest: 6 passed"
+    }
+  ],
+  "generated_at": "2026-02-20T10:03:10Z"
+}

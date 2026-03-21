@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Agent temp
+/tmp/cicd_agent/
+/tmp/cicd_results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets (keep .env.example, not .env)
+backend/.env
+frontend/.env
