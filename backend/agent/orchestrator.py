@@ -10,7 +10,7 @@ Real behaviour:
 - Runs real flake8 + pytest to verify
 """
 
-import os, re, sys, json, time, shutil, subprocess, traceback
+import os, re, sys, json, time, shutil, subprocess, traceback, tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -144,7 +144,7 @@ class ClonerAgent:
 
     def run(self, state: AgentState) -> AgentState:
         token = os.environ.get("GITHUB_TOKEN", "").strip()
-        clone_dir = f"/tmp/cicd_agent/{state.branch_name}_{int(time.time())}"
+        clone_dir = str(Path(tempfile.gettempdir()) / "cicd_agent" / f"{state.branch_name}_{int(time.time())}")
         os.makedirs(clone_dir, exist_ok=True)
 
         try:

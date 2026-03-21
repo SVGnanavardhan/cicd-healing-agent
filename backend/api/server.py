@@ -7,7 +7,7 @@ GET  /api/runs        — list recent runs
 GET  /health          — health check
 """
 
-import os, json, uuid
+import os, json, uuid, tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -34,9 +34,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory run store (swap for Redis in production)
 RUNS: dict = {}
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "/tmp/cicd_results")
+
+# Cross-platform temp dir (works on Windows + Linux)
+_default_results = str(Path(tempfile.gettempdir()) / "cicd_results")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", _default_results)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 

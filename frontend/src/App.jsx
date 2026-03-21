@@ -39,12 +39,12 @@ const PHASE_COLORS = {
 
 // ─── Real API runner — calls backend, polls until done ────────────────────────
 async function runAgentReal(repo, team, leader, token, onUpdate, signal) {
-  // 1. Trigger the run
-  onUpdate({ type:"log", phase:"CLONING", msg:`Connecting to agent backend...` });
+  onUpdate({ type:"log", phase:"CLONING", msg:"Connecting to agent backend..." });
   onUpdate({ type:"log", phase:"CLONING", msg: token
-    ? `Mode: fork repo → push fixes to your fork`
-    : `Mode: push fixes directly to new branch on original repo` });
+    ? "Mode: fork repo → push fixes to your fork"
+    : "Mode: analyze + fix locally (add token to push to fork)" });
 
+  // 1. Trigger the run
   let runId;
   try {
     const res = await fetch(`${BASE}/api/run`, {
@@ -54,25 +54,33 @@ async function runAgentReal(repo, team, leader, token, onUpdate, signal) {
         repo_url:     repo,
         team_name:    team,
         leader_name:  leader,
-        github_token: token || "",   // optional — empty string if not provided
+        github_token: token || "",
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Backend error ${res.status}: ${txt.slice(0,200)}`);
+    }
     const data = await res.json();
     runId = data.run_id;
-    onUpdate({ type:"log", phase:"CLONING", msg:`Run started. ID: ${runId}` });
+    onUpdate({ type:"log", phase:"CLONING", msg:`Agent started (run ID: ${runId.slice(0,8)}...)` });
   } catch (e) {
     if (e.name === "AbortError") return;
     onUpdate({ type:"error", msg: e.message });
     return;
   }
 
-  // 2. Poll every 2s until complete
-  let lastLogCount = 0;
-  while (true) {
+  // 2. Poll every 3s — track what we've already shown to avoid duplicates
+  let lastLogCount   = 0;
+  let lastFailCount  = 0;
+  let lastFixCount   = 0;
+  let lastCiCount    = 0;
+  let completed      = false;
+
+  while (!completed) {
     if (signal.aborted) return;
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 3000));
     if (signal.aborted) return;
 
     let data;
@@ -85,52 +93,57 @@ async function runAgentReal(repo, team, leader, token, onUpdate, signal) {
       continue;
     }
 
-    // Stream new log entries to terminal
-    if (data.results?.logs) {
-      const logs = data.results.logs;
-      for (let i = lastLogCount; i < logs.length; i++) {
-        const entry = logs[i];
-        // Guess phase from message
-        let phase = "MONITORING";
+    const results = data.results || {};
+
+    // Stream only NEW log entries
+    if (results.logs && results.logs.length > lastLogCount) {
+      const newLogs = results.logs.slice(lastLogCount);
+      newLogs.forEach(entry => {
         const m = entry.msg.toLowerCase();
-        if (m.includes("clon")) phase = "CLONING";
-        else if (m.includes("analyz")) phase = "ANALYZING";
-        else if (m.includes("fix")) phase = "FIXING";
+        let phase = "MONITORING";
+        if      (m.includes("clon") || m.includes("fork"))   phase = "CLONING";
+        else if (m.includes("analyz") || m.includes("scan")) phase = "ANALYZING";
+        else if (m.includes("fix") || m.includes("patch"))   phase = "FIXING";
         else if (m.includes("commit") || m.includes("push")) phase = "COMMITTING";
-        else if (m.includes("monitor") || m.includes("flake") || m.includes("pytest")) phase = "MONITORING";
-        else if (m.includes("done") || m.includes("results.json")) phase = "COMPLETE";
+        else if (m.includes("monitor") || m.includes("flake") || m.includes("pytest") || m.includes("ci/cd")) phase = "MONITORING";
+        else if (m.includes("done") || m.includes("results.json") || m.includes("complete")) phase = "COMPLETE";
         onUpdate({ type:"log", phase, msg: entry.msg });
-      }
-      lastLogCount = logs.length;
+      });
+      lastLogCount = results.logs.length;
     }
 
-    // Stream failures as they appear
-    if (data.results?.failures) {
-      data.results.failures.forEach(f => onUpdate({ type:"failure", failure: f }));
+    // Stream only NEW failures
+    if (results.failures && results.failures.length > lastFailCount) {
+      const newFails = results.failures.slice(lastFailCount);
+      newFails.forEach(f => onUpdate({ type:"failure", failure: f }));
+      lastFailCount = results.failures.length;
     }
 
-    // Stream fixes as they appear
-    if (data.results?.fixes) {
-      onUpdate({ type:"fixes", fixes: data.results.fixes });
+    // Stream only NEW fixes
+    if (results.fixes && results.fixes.length > lastFixCount) {
+      onUpdate({ type:"fixes", fixes: results.fixes });
+      lastFixCount = results.fixes.length;
     }
 
-    // Stream CI runs
-    if (data.results?.ci_runs) {
-      data.results.ci_runs.forEach(r => onUpdate({ type:"cirun", run: r }));
+    // Stream only NEW CI runs
+    if (results.ci_runs && results.ci_runs.length > lastCiCount) {
+      const newRuns = results.ci_runs.slice(lastCiCount);
+      newRuns.forEach(r => onUpdate({ type:"cirun", run: r }));
+      lastCiCount = results.ci_runs.length;
+    }
+
+    // Status message while running
+    if (data.status === "running") {
+      onUpdate({ type:"log", phase:"MONITORING", msg:`Agent running... (${lastLogCount} log entries so far)` });
     }
 
     if (data.status === "complete") {
-      onUpdate({ type:"complete", result: data.results });
-      return;
-    }
-
-    if (data.status === "error") {
+      completed = true;
+      onUpdate({ type:"complete", result: results });
+    } else if (data.status === "error") {
+      completed = true;
       onUpdate({ type:"error", msg: data.error || "Agent failed" });
-      return;
     }
-
-    // Show status in terminal
-    onUpdate({ type:"log", phase:"MONITORING", msg:`Status: ${data.status}...` });
   }
 }
 
