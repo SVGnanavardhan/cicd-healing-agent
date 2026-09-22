@@ -1,6 +1,6 @@
 // Backend client. Empty base URL means same-origin, which is what the Vercel
 // rewrite provides in production and what the Vite dev proxy provides locally.
-const BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const BASE = "https://cicd-healing-agent-pniu.onrender.com";
 
 export const apiUrl = (path) => `${BASE}${path}`;
 
