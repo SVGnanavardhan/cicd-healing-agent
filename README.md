@@ -49,7 +49,7 @@ Requires **Python 3.11+** and **Node 18+**.
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/KhadarBasha2006/Auto_Heal_CI.git
+git clone https://github.com/SVGnanavardhan/cicd-healing-agent.git
 cd Auto_Heal_CI
 
 # Terminal 1 - backend
@@ -66,7 +66,7 @@ Windows PowerShell 5.1 does not support `&&` as a statement separator -- use
 `;`, or just run the commands on separate lines.
 
 ```powershell
-git clone https://github.com/KhadarBasha2006/Auto_Heal_CI.git
+git clone https://github.com/SVGnanavardhan/cicd-healing-agent.git
 cd Auto_Heal_CI
 
 # Terminal 1 - backend
